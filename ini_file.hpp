@@ -23,6 +23,8 @@ protected:
 		section_next,//节后
 		key_name,//键名
 		key_value,//键值
+		multiline_key_value,//多行值
+		multiline_key_next,//多行值后
 		line_end,//行尾
 		comment,//注释
 		error,//错误
@@ -58,47 +60,71 @@ protected:
 		return c == '\n';
 	}
 
+	static bool IfNextComment(int c)//下一行
+	{
+		return c == '\"';
+	}
+
 	//返回true则continue一次
 	static bool StatusTransition(ReadStatus& enStatus, int c)
 	{
+		if (enStatus == ReadStatus::section_name && c != ']' ||
+			enStatus == ReadStatus::multiline_key_value && c != '\"')
+		{
+			return false;
+		}
+
 		switch (c)
 		{
 		case '['://节名
 			{
-				if (enStatus != ReadStatus::new_line)//出错
+				if (enStatus == ReadStatus::new_line)
 				{
-					enStatus = ReadStatus::error;
-					break;
+					enStatus = ReadStatus::section_name;
+					return true;
 				}
-				enStatus = ReadStatus::section_name;
-				return true;
+				enStatus = ReadStatus::error;//出错
 			}
 			break;
 		case ']'://节后
 			{
-				if (enStatus != ReadStatus::section_name)//出错
+				if (enStatus == ReadStatus::section_name)
 				{
-					enStatus = ReadStatus::error;
-					break;
+					enStatus = ReadStatus::section_next;
+					return true;
 				}
-				enStatus = ReadStatus::section_next;
-				return true;
+				enStatus = ReadStatus::error;//出错
 			}
 			break;
-		case ';'://注释
+		case '#'://注释
+		case ';':
 			{
 				enStatus = ReadStatus::comment;
 			}
 			break;
 		case '='://键值
 			{
-				if (enStatus != ReadStatus::key_name)//出错
+				if (enStatus == ReadStatus::key_name)
 				{
-					enStatus = ReadStatus::error;
-					break;
+					enStatus = ReadStatus::key_value;
+					return true;
 				}
-				enStatus = ReadStatus::key_value;
-				return true;
+				enStatus = ReadStatus::error;//出错
+			}
+			break;
+		case '\"'://多行值
+			{
+				if (enStatus == ReadStatus::key_value)
+				{
+					enStatus = ReadStatus::multiline_key_value;
+					break;//保留"字符
+				}
+				else if (enStatus == ReadStatus::multiline_key_value)
+				{
+					enStatus = ReadStatus::multiline_key_next;
+					return true;//舍弃末尾"字符
+				}
+				enStatus = ReadStatus::error;
 			}
 			break;
 		case '\n'://行尾
@@ -111,6 +137,7 @@ protected:
 				if (enStatus == ReadStatus::new_line)//新行
 				{
 					enStatus = ReadStatus::key_name;//键名
+					break;
 				}
 			}
 			break;
@@ -189,6 +216,7 @@ public:
 				}
 				continue;//处理下一个字符
 			case ReadStatus::section_next://节后
+			case ReadStatus::multiline_key_next://多行键值后
 				{
 					if (isspace(c))
 					{
@@ -202,6 +230,7 @@ public:
 				}
 				continue;//处理下一个字符
 			case ReadStatus::key_value://键值
+			case ReadStatus::multiline_key_value://多行键值
 				{
 					strKeyValue.push_back(c);
 				}
@@ -210,6 +239,17 @@ public:
 				{
 					if (enLastStatus == ReadStatus::key_value)
 					{
+						csKeyList[strKeyName] = std::move(strKeyValue);
+					}
+					else if (enLastStatus == ReadStatus::multiline_key_value)
+					{
+						strKeyValue.push_back('\n');//插入被转换的换行符
+						enStatus = enLastStatus;//恢复遇到换行符前处理的状态
+						continue;//处理下一个字符
+					}
+					else if (enLastStatus == ReadStatus::multiline_key_next)
+					{
+						strKeyValue.push_back('\"');//插入末尾被舍弃的"
 						csKeyList[strKeyName] = std::move(strKeyValue);
 					}
 					else if (enLastStatus == ReadStatus::section_next)
@@ -224,14 +264,15 @@ public:
 						csKeyList.clear();//清理
 
 						strLastSecName = strSecName;
-					}
+					}//else：非正常路径遇到换行，与err相同处理
+
 					//回退字符
 					ungetc('\n', fRead);
 				}
 				break;//进入错误处理
 			case ReadStatus::comment://注释
 				{
-					JumpIf(fRead, IfNextLine, true);//从当前位置到换行符前的内容全部跳过
+					JumpIf(fRead, IfNextLine, true);//从当前位置到换行符前的内容全部跳过，并把末尾换行符放回字符流以便后续处理行尾
 					enStatus = enLastStatus;//恢复遇到注释前处理的状态
 				}
 				continue;//处理下一个字符
