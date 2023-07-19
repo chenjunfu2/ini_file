@@ -8,8 +8,15 @@
 name=value</br>
 
 注释(comment)</br>
-注释使用英文分号（;）开头，单独占一行。在分号后面的文字，直到该行结尾都全部为注释，例如：</br>
-; comment text</br>
+单行注释使用英文分号(;)或井号(#)开头。在分号后面的文字，直到该行结尾都全部为注释，例如：</br>
+;comment text</br>
+\#comment text</br>
+
+多行值(multiline value)
+使用成对英文双引号(")包围的是多行字符串，引号遵循最近匹配原则，它是一个多行value，可包含(")，例如：</br>
+"value line</br>
+value line</br>
+value line"</br>
 
 # ini_file类说明：
 提供简易方便的接口来操作ini文件，构造类后类默认为空，使用Read成员函数从文件中读取数据，然后使用其它操作函数修改内容，并使用Write成员函数写入文件。</br>
