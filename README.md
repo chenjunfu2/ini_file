@@ -12,8 +12,8 @@ name=value</br>
 ;comment text</br>
 \#comment text</br>
 
-多行值(multiline value)
-使用成对英文双引号(")包围的是多行字符串，引号遵循最近匹配原则，它是一个多行value，可包含(")，例如：</br>
+原始值(raw value)</br>
+使用成对英文双引号(")包围的是原始字符串，可包含空字符，引号遵循最近匹配原则，例如：</br>
 "value line</br>
 value line</br>
 value line"</br>
