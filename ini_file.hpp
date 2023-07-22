@@ -23,8 +23,8 @@ protected:
 		section_next,//节后
 		key_name,//键名
 		key_value,//键值
-		multiline_key_value,//多行值
-		multiline_key_next,//多行值后
+		raw_key_value,//原始值（可以包含空格、换行符的原始值，使用"包围）
+		raw_key_next,//原始值后
 		line_end,//行尾
 		comment,//注释
 		error,//错误
@@ -65,11 +65,47 @@ protected:
 		return c == '\"';
 	}
 
+	//读取直到谓词返回false
+	template<typename T>
+	static bool ReadUntil(ReadData &rd, FILE *f, T t, bool unget = true)
+	{
+		int c;//这里不使用char的原因是为了判断EOF，这样即便文件内存在0xff也不影响EOF的判断
+		while ((c = fgetc(f)) != EOF)
+		{
+			if (!t(c))
+			{
+				if (unget == true)
+				{
+					ungetc(c, f);//回退
+				}
+				else
+				{
+					rd.push_back(c);//放入
+				}
+				return true;
+			}
+
+			rd.push_back(c);
+		}
+
+		return false;//遇到文件尾
+	}
+
+	static bool UntilSectionNext(int c)
+	{
+		return c != ']' && c != '\n';//没到新行并且没遇到sec结尾
+	}
+
+	static bool UntilRawKeyNext(int c)
+	{
+		return c != '\"';
+	}
+
 	//返回true则continue一次
 	static bool StatusTransition(ReadStatus& enStatus, int c)
 	{
 		if (enStatus == ReadStatus::section_name && c != ']' ||
-			enStatus == ReadStatus::multiline_key_value && c != '\"')
+			enStatus == ReadStatus::raw_key_value && c != '\"')
 		{
 			return false;
 		}
@@ -81,7 +117,7 @@ protected:
 				if (enStatus == ReadStatus::new_line)
 				{
 					enStatus = ReadStatus::section_name;
-					return true;
+					break;
 				}
 				enStatus = ReadStatus::error;//出错
 			}
@@ -112,16 +148,16 @@ protected:
 				enStatus = ReadStatus::error;//出错
 			}
 			break;
-		case '\"'://多行值
+		case '\"'://原始值
 			{
 				if (enStatus == ReadStatus::key_value)
 				{
-					enStatus = ReadStatus::multiline_key_value;
-					break;//保留"字符
+					enStatus = ReadStatus::raw_key_value;
+					break;
 				}
-				else if (enStatus == ReadStatus::multiline_key_value)
+				else if (enStatus == ReadStatus::raw_key_value)
 				{
-					enStatus = ReadStatus::multiline_key_next;
+					enStatus = ReadStatus::raw_key_next;
 					return true;//舍弃末尾"字符
 				}
 				enStatus = ReadStatus::error;
@@ -212,11 +248,14 @@ public:
 				break;//进入错误处理
 			case ReadStatus::section_name://节名
 				{
-					strSecName.push_back(c);
+					if (!ReadUntil(strSecName, fRead, UntilSectionNext, true))
+					{
+						break;//错误处理
+					}
 				}
 				continue;//处理下一个字符
 			case ReadStatus::section_next://节后
-			case ReadStatus::multiline_key_next://多行键值后
+			case ReadStatus::raw_key_next://原始键值后
 				{
 					if (isspace(c))
 					{
@@ -230,27 +269,34 @@ public:
 				}
 				continue;//处理下一个字符
 			case ReadStatus::key_value://键值
-			case ReadStatus::multiline_key_value://多行键值
 				{
+					if (isspace(c))
+					{
+						break;//进入错误处理
+					}
+					//压入尾部
 					strKeyValue.push_back(c);
 				}
 				continue;//处理下一个字符
+			case ReadStatus::raw_key_value://原始键值
+				{
+					if (!ReadUntil(strKeyValue, fRead, UntilRawKeyNext, true))
+					{
+						break;//错误处理
+					}
+				}
+				continue;
 			case ReadStatus::line_end://行尾
 				{
-					if (enLastStatus == ReadStatus::key_value)
+					if (enLastStatus == ReadStatus::key_value || enLastStatus == ReadStatus::raw_key_next)
 					{
 						csKeyList[strKeyName] = std::move(strKeyValue);
 					}
-					else if (enLastStatus == ReadStatus::multiline_key_value)
+					else if (enLastStatus == ReadStatus::raw_key_value)
 					{
 						strKeyValue.push_back('\n');//插入被转换的换行符
 						enStatus = enLastStatus;//恢复遇到换行符前处理的状态
 						continue;//处理下一个字符
-					}
-					else if (enLastStatus == ReadStatus::multiline_key_next)
-					{
-						strKeyValue.push_back('\"');//插入末尾被舍弃的"
-						csKeyList[strKeyName] = std::move(strKeyValue);
 					}
 					else if (enLastStatus == ReadStatus::section_next)
 					{
@@ -329,7 +375,18 @@ public:
 
 			for (auto &[strKeyName, strKeyValue] : csKeyList)
 			{
-				if (fprintf(fWrite, "%s=%s\n", strKeyName.c_str(), strKeyValue.c_str()) == EOF)
+				bool bIsRawValue = false;//写入之前判断strKeyValue是否存在空字符，如果是则在前后输出"包围原始值
+				for (auto &it : strKeyValue)
+				{
+					if (isspace((unsigned char)it))
+					{
+						bIsRawValue = true;
+						break;
+					}
+				}
+
+				if (fprintf(fWrite, "%s=%s", strKeyName.c_str(), bIsRawValue ? "\"" : "") == EOF ||
+					fprintf(fWrite, "%s%s\n", strKeyValue.c_str(), bIsRawValue ? "\"" : "") == EOF)
 				{
 					return false;
 				}
