@@ -104,12 +104,6 @@ protected:
 	//返回true则continue一次
 	static bool StatusTransition(ReadStatus& enStatus, int c)
 	{
-		if (enStatus == ReadStatus::section_name && c != ']' ||
-			enStatus == ReadStatus::raw_key_value && c != '\"')
-		{
-			return false;
-		}
-
 		switch (c)
 		{
 		case '['://节名
